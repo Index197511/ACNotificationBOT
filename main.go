@@ -13,16 +13,12 @@ import (
 )
 
 type UserInfo struct {
-	ID            int     `json:"id"`
-	Epoch         int64   `json:"epoch_second"`
-	ProblemID     string  `json:"problem_id"`
-	ContestID     string  `json:"contest_id"`
-	UserID        string  `json:"user_id"`
-	Language      string  `json:"language"`
-	Point         float32 `json:"point"`
-	Length        int     `json:"length"`
-	Result        string  `json:"result"`
-	ExecutionTime int     `json:"execution_time"`
+	Epoch     int64  `json:"epoch_second"`
+	ProblemID string `json:"problem_id"`
+	ContestID string `json:"contest_id"`
+	UserID    string `json:"user_id"`
+	Language  string `json:"language"`
+	Result    string `json:"result"`
 }
 
 type SlackRequestBody struct {
@@ -32,7 +28,7 @@ type SlackRequestBody struct {
 func main() {
 	users := usersFromFile("users.txt")
 	for _, i := range users {
-		result := fetchNewAC(i, time.Now().Unix()-14400)
+		result := fetchNewAC(i, time.Now().Unix()-86400)
 		text := formatResult(result)
 		postSlack(text)
 	}
@@ -55,15 +51,14 @@ func fetchNewAC(users string, bound int64) [][]string {
 	}
 
 	byteArray, _ := ioutil.ReadAll(response.Body)
-	jsonBytes := ([]byte)(byteArray)
 	data := new([]UserInfo)
 
-	if err := json.Unmarshal(jsonBytes, data); err != nil {
+	if err := json.Unmarshal(byteArray, data); err != nil {
 		log.Fatal(err)
 	}
 
 	for _, i := range *data {
-		if i.Epoch > bound {
+		if i.Epoch > bound && i.Result == "AC" {
 			result = append(result, []string{i.UserID, i.ProblemID, i.ContestID, i.Language})
 		}
 	}
@@ -71,23 +66,24 @@ func fetchNewAC(users string, bound int64) [][]string {
 	return result
 }
 
-func formatResult(result [][]string) []string {
-	var text []string
+func formatResult(result [][]string) string {
+	var text string
 	for _, i := range result {
 		url := "<https://atcoder.jp/contests/" + i[2] + "/tasks/" + i[1] + "|" + i[1] + ">"
-		text = append(text, i[0]+"さんが"+url+"を"+i[3]+"でACしました！")
+		text = text + "\n" + i[0] + "さんが" + url + "を" + i[3] + "でACしました！"
 	}
 	return text
 }
 
-func postSlack(text []string) {
-	client := new(http.Client)
-	webhookurl, err := ioutil.ReadFile("webhook.txt")
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, i := range text {
-		slackBody, _ := json.Marshal(SlackRequestBody{Text: i})
+func postSlack(text string) {
+	if text != "" {
+		client := new(http.Client)
+		webhookurl, err := ioutil.ReadFile("webhook.txt")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(text)
+		slackBody, _ := json.Marshal(SlackRequestBody{Text: text})
 		req, _ := http.NewRequest(http.MethodPost,
 			string(webhookurl),
 			bytes.NewBuffer(slackBody))
