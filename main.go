@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -27,70 +26,92 @@ type SlackRequestBody struct {
 
 func main() {
 	users := usersFromFile("users.txt")
-	for _, i := range users {
-		result := fetchNewAC(i, time.Now().Unix()-86400)
-		text := formatResult(result)
-		postSlack(text)
+	{
+		for _, i := range users {
+			result := fetchNewAC(i, time.Now().Unix()-(60*60*24))
+			text := formatTextForSlack(result)
+			postSlack(text)
+		}
 	}
 }
 
-func fetchNewAC(users string, bound int64) [][]string {
-	var result [][]string
+func fetchNewAC(user string, bound int64) []*UserInfo {
+	var req *http.Request
+	{
+		req = createRequest(http.MethodGet, "https://kenkoooo.com/atcoder/atcoder-api/results", bytes.NewBuffer(nil))
+		query := req.URL.Query()
+		query.Set("user", user)
+		req.URL.RawQuery = query.Encode()
+	}
+
 	client := new(http.Client)
-	req, err := http.NewRequest(http.MethodGet, "https://kenkoooo.com/atcoder/atcoder-api/results", nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	query := req.URL.Query()
-	query.Set("user", users)
-	req.URL.RawQuery = query.Encode()
-
 	response, err := client.Do(req)
+
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	byteArray, _ := ioutil.ReadAll(response.Body)
-	data := new([]UserInfo)
+	rb, _ := ioutil.ReadAll(response.Body)
+	return formatResult(rb, bound)
 
-	if err := json.Unmarshal(byteArray, data); err != nil {
-		log.Fatal(err)
-	}
-
-	for _, i := range *data {
-		if i.Epoch > bound && i.Result == "AC" {
-			result = append(result, []string{i.UserID, i.ProblemID, i.ContestID, i.Language})
+}
+func formatResult(fetchResult []byte, bound int64) []*UserInfo {
+	var data []*UserInfo
+	{
+		if err := json.Unmarshal(fetchResult, &data); err != nil {
+			log.Fatal(err)
 		}
 	}
-	fmt.Println(result)
+
+	var result []*UserInfo
+	{
+		for _, i := range data {
+			if i.Epoch > bound && i.Result == "AC" {
+				result = append(result, i)
+			}
+		}
+	}
+
 	return result
 }
 
-func formatResult(result [][]string) string {
+func formatTextForSlack(result []*UserInfo) string {
 	var text string
-	for _, i := range result {
-		url := "<https://atcoder.jp/contests/" + i[2] + "/tasks/" + i[1] + "|" + i[1] + ">"
-		text = text + "\n" + i[0] + "さんが" + url + "を" + i[3] + "でACしました！"
+	{
+		for _, i := range result {
+			url := "<https://atcoder.jp/contests/" + i.ContestID + "/tasks/" + i.ProblemID + "|" + i.ProblemID + ">"
+			text += "\n" + i.UserID + "さんが" + url + "を" + i.Language + "でACしました！"
+		}
 	}
 	return text
 }
 
 func postSlack(text string) {
-	if text != "" {
-		client := new(http.Client)
-		webhookurl, err := ioutil.ReadFile("webhook.txt")
+	if text == "" {
+		return
+	}
+
+	var req *http.Request
+	{
+		webhookURL, err := ioutil.ReadFile("webhook.txt")
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(text)
+
 		slackBody, _ := json.Marshal(SlackRequestBody{Text: text})
-		req, _ := http.NewRequest(http.MethodPost,
-			string(webhookurl),
+		req = createRequest(http.MethodPost,
+			string(webhookURL),
 			bytes.NewBuffer(slackBody))
+
 		req.Header.Add("Content-Type", "application/json")
-		resp, _ := client.Do(req)
-		fmt.Println(resp.Status)
 	}
+
+	var client *http.Client
+	{
+		client = new(http.Client)
+		_, _ = client.Do(req)
+	}
+
 }
 
 func usersFromFile(path string) []string {
@@ -104,6 +125,7 @@ func usersFromFile(path string) []string {
 			log.Fatal(err)
 		}
 	}()
+
 	var users []string
 	scanner := bufio.NewScanner(f)
 
@@ -112,4 +134,13 @@ func usersFromFile(path string) []string {
 	}
 
 	return users
+}
+
+func createRequest(method, url string, body *bytes.Buffer) *http.Request {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return req
 }
